@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Профиль{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-lg-8 col-xl-6">
+    <h2 class="mb-3">Профиль</h2>
+    <form method="post">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">Ник</label>
+          <input class="form-control" value="{{ user.nickname }}" disabled>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Возраст</label>
+          <input class="form-control" name="age" type="number" min="1" max="150" value="{{ user.age or '' }}">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Пол</label>
+          <select class="form-select" name="gender">
+            <option value="" {% if not user.gender %}selected{% endif %}>Не указан</option>
+            <option value="Мужской" {% if user.gender=='Мужской' %}selected{% endif %}>Мужской</option>
+            <option value="Женский" {% if user.gender=='Женский' %}selected{% endif %}>Женский</option>
+          </select>
+        </div>
+        <div class="col-12">
+          <label class="form-label">Описание</label>
+          <textarea class="form-control" rows="3" name="bio">{{ user.bio or '' }}</textarea>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Увлечения</label>
+          <input class="form-control" name="hobbies" value="{{ user.hobbies or '' }}">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Город</label>
+          <input class="form-control" name="city" value="{{ user.city or '' }}">
+        </div>
+        <div class="col-12">
+          <label class="form-label">Девиз</label>
+          <input class="form-control" name="motto" value="{{ user.motto or '' }}">
+        </div>
+      </div>
+      <div class="mt-3 d-flex gap-2">
+        <button class="btn btn-primary">Сохранить</button>
+        <a class="btn btn-secondary" href="{{ url_for('index') }}">Назад</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+

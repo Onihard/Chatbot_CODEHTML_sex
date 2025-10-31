@@ -2,11 +2,11 @@
 {% block title %}Комната {{ room_name }}{% endblock %}
 
 {% block content %}
-<div class="row">
-  <div class="col-md-10 offset-md-1">
+<div class="row g-3">
+  <div class="col-lg-9">
     <h2 class="mb-3">Комната: {{ room_name }}</h2>
 
-    <div id="messages" class="border rounded p-3 bg-light" style="height: 420px; overflow-y: auto;">
+    <div id="messages" class="border rounded p-3 bg-light-subtle" style="height: 480px; overflow-y: auto;">
       <!-- Сообщения будут подгружаться сюда -->
     </div>
 
@@ -23,6 +23,15 @@
       <small class="text-muted">Вы: {{ nickname or "Гость (войдите для отправки)" }}</small>
     </div>
   </div>
+  <div class="col-lg-3">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Участники</span>
+        <span class="badge bg-secondary" id="membersCount">0</span>
+      </div>
+      <ul class="list-group list-group-flush" id="membersList" style="max-height: 480px; overflow:auto;"></ul>
+    </div>
+  </div>
 </div>
 {% endblock %}
 
@@ -33,43 +42,117 @@ const messagesDiv = document.getElementById('messages');
 const messageInput = document.getElementById('messageInput');
 const sendBtn = document.getElementById('sendBtn');
 
-let lastMessageId = null; // последний загруженный id
-const MAX_MESSAGES = 100;
+let lastMessageId = null;      // id последнего (самого нового) сообщения в списке
+let oldestMessageId = null;    // id самого старого сообщения в списке
+let autoScroll = true;         // автоскролл к низу, если пользователь у низа
+const BOTTOM_THRESHOLD = 40;   // px от низа, чтобы считать, что пользователь внизу
+const TOP_THRESHOLD = 40;      // px от верха, чтобы грузить старые
+const MAX_MESSAGES = 300;      // ограничение на количество DOM-узлов
 
-// функция обновления сообщений без дергания скролла
-async function loadMessages() {
+function renderMessage(m) {
+  const div = document.createElement('div');
+  const time = document.createElement('small');
+  time.className = 'text-muted';
+  time.textContent = `[${m.time}] `;
+  const bold = document.createElement('strong');
+  bold.textContent = m.nickname + ': ';
+  div.appendChild(time);
+  div.appendChild(bold);
+  div.appendChild(document.createTextNode(m.text));
+  return div;
+}
+
+function atBottom() {
+  const delta = messagesDiv.scrollHeight - messagesDiv.clientHeight - messagesDiv.scrollTop;
+  return delta <= BOTTOM_THRESHOLD;
+}
+
+function scrollToBottom() {
+  messagesDiv.scrollTop = messagesDiv.scrollHeight;
+}
+
+function trimIfNeeded() {
+  // Поддерживаем ограничение числа сообщений, удаляя самые старые сверху
+  while (messagesDiv.children.length > MAX_MESSAGES) {
+    messagesDiv.removeChild(messagesDiv.firstChild);
+  }
+}
+
+// Начальная загрузка последних сообщений и прокрутка вниз
+async function initialLoad() {
+  try {
+    const res = await fetch(`/get_messages/${encodeURIComponent(roomName)}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.length) return;
+    data.forEach(m => {
+      messagesDiv.appendChild(renderMessage(m));
+      oldestMessageId = oldestMessageId == null ? m.id : Math.min(oldestMessageId, m.id);
+      lastMessageId = m.id; // в конце будет id самого нового
+    });
+    scrollToBottom();
+  } catch(e) {
+    console.error('Ошибка при начальной загрузке сообщений', e);
+  }
+}
+
+// Подгрузка новых сообщений (после lastMessageId)
+async function loadNewMessages() {
   try {
     let url = `/get_messages/${encodeURIComponent(roomName)}`;
     if (lastMessageId) url += `?after_id=${lastMessageId}`;
+    const wasAtBottom = atBottom();
     const res = await fetch(url);
     if (!res.ok) return;
     const data = await res.json();
     if (!data.length) return;
 
-    const scrollTop = messagesDiv.scrollTop;
-    const scrollBottom = messagesDiv.scrollHeight - messagesDiv.clientHeight - scrollTop;
-
     data.forEach(m => {
-      const div = document.createElement('div');
-      const time = document.createElement('small');
-      time.className = 'text-muted';
-      time.textContent = `[${m.time}] `;
-      const bold = document.createElement('strong');
-      bold.textContent = m.nickname + ': ';
-      div.appendChild(time);
-      div.appendChild(bold);
-      div.appendChild(document.createTextNode(m.text));
-      messagesDiv.appendChild(div);
+      messagesDiv.appendChild(renderMessage(m));
       lastMessageId = m.id;
+      if (oldestMessageId == null) oldestMessageId = m.id;
     });
 
-    // НЕ трогаем scrollTop — пользователь остаётся там, где поставил
+    trimIfNeeded();
+
+    // Скроллим вниз только если пользователь был у низа
+    autoScroll = wasAtBottom || autoScroll;
+    if (autoScroll) scrollToBottom();
   } catch(e) {
-    console.error("Ошибка при обновлении сообщений", e);
+    console.error('Ошибка при обновлении сообщений', e);
   }
 }
 
-// отправка сообщения через fetch (без перезагрузки)
+// Подгрузка старых сообщений (до oldestMessageId), с сохранением позиции скролла
+async function loadOlderMessages() {
+  if (!oldestMessageId) return;
+  try {
+    const prevScrollHeight = messagesDiv.scrollHeight;
+    const res = await fetch(`/get_messages/${encodeURIComponent(roomName)}?before_id=${oldestMessageId}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.length) return; // больше старых нет
+
+    // prepend: добавляем в начало, сохраняя видимую позицию
+    const fragment = document.createDocumentFragment();
+    data.forEach(m => {
+      fragment.appendChild(renderMessage(m));
+      oldestMessageId = Math.min(oldestMessageId, m.id);
+      if (lastMessageId == null) lastMessageId = m.id;
+    });
+    messagesDiv.insertBefore(fragment, messagesDiv.firstChild);
+
+    // Корректируем scrollTop, чтобы контент не "прыгнул"
+    const newScrollHeight = messagesDiv.scrollHeight;
+    messagesDiv.scrollTop = newScrollHeight - prevScrollHeight + messagesDiv.scrollTop;
+
+    trimIfNeeded();
+  } catch(e) {
+    console.error('Ошибка при подгрузке старых сообщений', e);
+  }
+}
+
+// Отправка сообщения через fetch (без перезагрузки)
 async function sendMessage() {
   const text = messageInput.value.trim();
   if (!text) return;
@@ -82,10 +165,11 @@ async function sendMessage() {
     });
     if (res.ok) {
       messageInput.value = '';
-      loadMessages(); // подгружаем новые сообщения
+      autoScroll = true; // после отправки логично удерживать низ
+      loadNewMessages();
     }
   } catch(e) {
-    console.error("Ошибка при отправке сообщения", e);
+    console.error('Ошибка при отправке сообщения', e);
   }
 }
 
@@ -97,10 +181,42 @@ messageInput.addEventListener('keydown', e => {
   }
 });
 
-// автообновление каждые 2.5 сек
-setInterval(loadMessages, 2500);
+// Следим за положением скролла: включаем/выключаем автоскролл и грузим старые
+messagesDiv.addEventListener('scroll', () => {
+  autoScroll = atBottom();
+  if (messagesDiv.scrollTop <= TOP_THRESHOLD) {
+    loadOlderMessages();
+  }
+});
 
-// начальная загрузка последних сообщений
-loadMessages();
+// Автообновление новых сообщений
+setInterval(loadNewMessages, 2000);
+
+// Первичная загрузка
+initialLoad();
+
+// ---- Участники комнаты ----
+const membersList = document.getElementById('membersList');
+const membersCount = document.getElementById('membersCount');
+
+async function updateMembers() {
+  try {
+    const res = await fetch(`/room_members/${encodeURIComponent(roomName)}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    membersList.innerHTML = '';
+    data.forEach(nick => {
+      const li = document.createElement('li');
+      li.className = 'list-group-item';
+      li.textContent = nick;
+      membersList.appendChild(li);
+    });
+    membersCount.textContent = data.length;
+  } catch(e) {
+    // noop
+  }
+}
+setInterval(updateMembers, 3000);
+updateMembers();
 </script>
 {% endblock %}

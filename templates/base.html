@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-bs-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -15,8 +15,15 @@
     <a class="navbar-brand" href="{{ url_for('index') }}">ChatWeb</a>
     <div class="collapse navbar-collapse">
       <ul class="navbar-nav ms-auto">
+        <li class="nav-item me-2">
+          <button id="themeToggle" class="btn btn-sm btn-outline-light">Тема</button>
+        </li>
         {% if session.get('nickname') %}
           <li class="nav-item"><a class="nav-link" href="#">Привет, {{ session['nickname'] }}</a></li>
+          <li class="nav-item"><a class="nav-link" href="{{ url_for('profile') }}">Профиль</a></li>
+          {% if is_admin_nick(session['nickname']) %}
+            <li class="nav-item"><a class="nav-link" href="{{ url_for('admin_rooms') }}">Админ</a></li>
+          {% endif %}
           <li class="nav-item"><a class="nav-link" href="{{ url_for('dm_index') }}">DM</a></li>
           <li class="nav-item"><a class="nav-link" href="{{ url_for('mail') }}">Mail</a></li>
           <li class="nav-item">
@@ -44,10 +51,49 @@
     {% endif %}
   {% endwith %}
 
-  {% block content %}{% endblock %}
+  <div class="row">
+    <aside class="col-lg-3 d-none d-lg-block">
+      <div class="card mb-3">
+        <div class="card-header">Комнаты</div>
+        <div class="list-group list-group-flush" style="max-height: 60vh; overflow:auto;">
+          {% for r in rooms_sidebar %}
+            <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" href="{{ url_for('room', room_name=r.name) }}">
+              <span>{{ r.name }}</span>
+              <span class="badge bg-secondary">{{ r.count }}</span>
+            </a>
+          {% else %}
+            <div class="p-3 text-muted">Нет комнат</div>
+          {% endfor %}
+        </div>
+      </div>
+    </aside>
+    <main class="col-lg-9">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// Тема: сохраняем в localStorage и применяем на <html>
+(function() {
+  const key = 'theme';
+  const btn = document.getElementById('themeToggle');
+  function apply(theme) {
+    document.documentElement.setAttribute('data-bs-theme', theme);
+  }
+  const saved = localStorage.getItem(key) || 'dark';
+  apply(saved);
+  if (btn) {
+    btn.addEventListener('click', function() {
+      const cur = document.documentElement.getAttribute('data-bs-theme') || 'dark';
+      const next = (cur === 'dark') ? 'light' : 'dark';
+      apply(next);
+      localStorage.setItem(key, next);
+    });
+  }
+})();
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

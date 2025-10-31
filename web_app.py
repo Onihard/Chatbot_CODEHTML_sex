@@ -1,7 +1,8 @@
 from flask import Flask, render_template, request, redirect, session, url_for, jsonify, flash
 import sqlite3
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 app = Flask(__name__)
 app.secret_key = "put_a_strong_secret_here"  # поменяй на что-то своё в продакшн
@@ -33,7 +34,8 @@ def ensure_tables():
         auth_id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         nickname TEXT UNIQUE,
-        password_hash TEXT
+        password_hash TEXT,
+        role TEXT DEFAULT 'user'
     )
     """)
     # Если users таблицы нет (маловероятно, у тебя уже есть бот), создать минимальную структуру
@@ -44,6 +46,9 @@ def ensure_tables():
         age INTEGER,
         gender TEXT,
         bio TEXT,
+        hobbies TEXT,
+        city TEXT,
+        motto TEXT,
         current_room TEXT
     )
     """)
@@ -65,6 +70,16 @@ def ensure_tables():
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )
     """)
+    # --- Миграции (безопасные ALTER'ы) ---
+    try:
+        cur.execute("ALTER TABLE auth ADD COLUMN role TEXT DEFAULT 'user'")
+    except sqlite3.OperationalError:
+        pass
+    for col in ("hobbies TEXT", "city TEXT", "motto TEXT"):
+        try:
+            cur.execute(f"ALTER TABLE users ADD COLUMN {col}")
+        except sqlite3.OperationalError:
+            pass
     # вставляем дефолтные комнаты, если их нет
     default_rooms = [
         ("Москва", "Чат для жителей Москвы"),
@@ -77,6 +92,21 @@ def ensure_tables():
     conn.close()
 
 ensure_tables()
+
+# Глобально подмешиваем список комнат для боковой панели
+@app.context_processor
+def inject_rooms_sidebar():
+    try:
+        conn = get_db_connection()
+        rooms = conn.execute("SELECT name, description FROM rooms ORDER BY name").fetchall()
+        out = []
+        for r in rooms:
+            cnt = conn.execute("SELECT COUNT(*) as c FROM users WHERE current_room = ?", (r['name'],)).fetchone()['c']
+            out.append({'name': r['name'], 'description': r['description'], 'count': cnt})
+        conn.close()
+        return { 'rooms_sidebar': out }
+    except Exception:
+        return { 'rooms_sidebar': [] }
 
 # ------------------------
 # Утилиты для работы с пользователем (веб)
@@ -92,6 +122,17 @@ def get_current_user_row():
     user = conn.execute("SELECT * FROM users WHERE nickname = ?", (nick,)).fetchone()
     conn.close()
     return user
+
+def is_admin_nick(nickname: str) -> bool:
+    if not nickname:
+        return False
+    conn = get_db_connection()
+    row = conn.execute("SELECT role FROM auth WHERE nickname = ?", (nickname,)).fetchone()
+    conn.close()
+    return bool(row and (row['role'] or '').lower() == 'admin')
+
+# Делаем функцию доступной внутри шаблонов Jinja
+app.jinja_env.globals['is_admin_nick'] = is_admin_nick
 
 # ------------------------
 # Главная: список комнат
@@ -114,6 +155,32 @@ def index():
         rooms_with_counts.append({'name': r['name'], 'description': r['description'], 'count': cnt})
     conn.close()
     return render_template('index.html', rooms=rooms_with_counts, logged=logged, nickname=nickname)
+
+# ------------------------
+# Профиль: просмотр/редактирование
+# ------------------------
+@app.route('/profile', methods=['GET', 'POST'])
+def profile():
+    if 'nickname' not in session:
+        return redirect(url_for('login'))
+    nick = session['nickname']
+    conn = get_db_connection()
+    if request.method == 'POST':
+        age = request.form.get('age', type=int)
+        gender = request.form.get('gender')
+        bio = request.form.get('bio')
+        hobbies = request.form.get('hobbies')
+        city = request.form.get('city')
+        motto = request.form.get('motto')
+        conn.execute("UPDATE users SET age = ?, gender = ?, bio = ?, hobbies = ?, city = ?, motto = ? WHERE nickname = ?",
+                     (age, gender, bio, hobbies, city, motto, nick))
+        conn.commit()
+        flash('Профиль обновлён')
+        conn.close()
+        return redirect(url_for('profile'))
+    user = conn.execute("SELECT * FROM users WHERE nickname = ?", (nick,)).fetchone()
+    conn.close()
+    return render_template('profile.html', user=user)
 
 # ------------------------
 # Join room (войти в комнату)
@@ -170,6 +237,83 @@ def room(room_name):
     nickname = session.get('nickname')
     return render_template('room.html', room_name=room_name, messages=messages, nickname=nickname)
 
+# ------------------------
+# CRUD комнат
+# ------------------------
+@app.route('/rooms/new', methods=['GET', 'POST'])
+def rooms_new():
+    if 'nickname' not in session:
+        return redirect(url_for('login'))
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        description = request.form.get('description', '').strip()
+        if not name:
+            flash('Название комнаты обязательно')
+            return redirect(url_for('rooms_new'))
+        conn = get_db_connection()
+        try:
+            conn.execute("INSERT INTO rooms (name, description) VALUES (?, ?)", (name, description))
+            conn.commit()
+            flash('Комната создана')
+            return redirect(url_for('room', room_name=name))
+        except sqlite3.IntegrityError:
+            flash('Комната с таким названием уже существует')
+            return redirect(url_for('rooms_new'))
+        finally:
+            conn.close()
+    return render_template('room_form.html', mode='create', room=None)
+
+@app.route('/rooms/<room_name>/edit', methods=['GET', 'POST'])
+def rooms_edit(room_name):
+    if 'nickname' not in session:
+        return redirect(url_for('login'))
+    if not is_admin_nick(session['nickname']):
+        flash('Требуются права администратора')
+        return redirect(url_for('room', room_name=room_name))
+    conn = get_db_connection()
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        description = request.form.get('description', '').strip()
+        try:
+            conn.execute("UPDATE rooms SET name = ?, description = ? WHERE name = ?", (name, description, room_name))
+            conn.commit()
+            flash('Комната обновлена')
+            return redirect(url_for('room', room_name=name))
+        finally:
+            conn.close()
+    room_row = conn.execute("SELECT * FROM rooms WHERE name = ?", (room_name,)).fetchone()
+    conn.close()
+    return render_template('room_form.html', mode='edit', room=room_row)
+
+@app.route('/rooms/<room_name>/delete', methods=['POST'])
+def rooms_delete(room_name):
+    if 'nickname' not in session:
+        return redirect(url_for('login'))
+    if not is_admin_nick(session['nickname']):
+        flash('Требуются права администратора')
+        return redirect(url_for('room', room_name=room_name))
+    conn = get_db_connection()
+    conn.execute("DELETE FROM rooms WHERE name = ?", (room_name,))
+    conn.commit()
+    conn.close()
+    flash('Комната удалена')
+    return redirect(url_for('index'))
+
+# ------------------------
+# Админ-панель: список комнат
+# ------------------------
+@app.route('/admin/rooms')
+def admin_rooms():
+    if 'nickname' not in session:
+        return redirect(url_for('login'))
+    if not is_admin_nick(session['nickname']):
+        flash('Требуются права администратора')
+        return redirect(url_for('index'))
+    conn = get_db_connection()
+    rooms = conn.execute("SELECT * FROM rooms ORDER BY name").fetchall()
+    conn.close()
+    return render_template('admin_rooms.html', rooms=rooms)
+
 # JSON endpoint для автообновления и подгрузки
 @app.route('/get_messages/<room_name>')
 def get_messages(room_name):
@@ -207,8 +351,43 @@ def get_messages(room_name):
     if before_id or not after_id:
         msgs = list(reversed(msgs))
 
-    out = [{'id': m['message_id'], 'nickname': m['nickname'], 'text': m['text'], 'time': m['time']} for m in msgs]
+    # Приводим время к MSK и убираем миллисекунды (HH:MM:SS)
+    out = []
+    # Пытаемся использовать системную БД часовых поясов; при её отсутствии — фолбэк на фиксированный UTC+3
+    try:
+        msk = ZoneInfo("Europe/Moscow")
+    except Exception:
+        msk = timezone(timedelta(hours=3))
+    for m in msgs:
+        t = m['time']
+        # SQLite может вернуть строку или datetime — нормализуем
+        if isinstance(t, str):
+            try:
+                # Пытаемся распарсить ISO с микросекундами
+                dt = datetime.fromisoformat(t)
+            except ValueError:
+                # fallback: без микросекунд
+                try:
+                    dt = datetime.strptime(t, "%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    dt = datetime.utcnow()
+        else:
+            dt = t
+        if dt.tzinfo is None:
+            # считаем что это UTC и конвертируем в MSK
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt_msk = dt.astimezone(msk)
+        time_str = dt_msk.strftime("%H:%M:%S")
+        out.append({'id': m['message_id'], 'nickname': m['nickname'], 'text': m['text'], 'time': time_str})
     return jsonify(out)
+
+# Список участников комнаты (JSON)
+@app.route('/room_members/<room_name>')
+def room_members(room_name):
+    conn = get_db_connection()
+    rows = conn.execute("SELECT nickname FROM users WHERE current_room = ? ORDER BY nickname", (room_name,)).fetchall()
+    conn.close()
+    return jsonify([r['nickname'] for r in rows])
 
 
 
