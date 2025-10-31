@@ -170,19 +170,48 @@ def room(room_name):
     nickname = session.get('nickname')
     return render_template('room.html', room_name=room_name, messages=messages, nickname=nickname)
 
-# JSON endpoint для автообновления
+# JSON endpoint для автообновления и подгрузки
 @app.route('/get_messages/<room_name>')
 def get_messages(room_name):
+    after_id = request.args.get('after_id', type=int)
+    before_id = request.args.get('before_id', type=int)
+    limit = 100  # количество сообщений за раз
+
     conn = get_db_connection()
-    messages = conn.execute(
-        "SELECT users.nickname as nickname, messages.message_text as text, messages.timestamp as time "
-        "FROM messages JOIN users ON messages.user_id = users.user_id "
-        "WHERE room_name = ? ORDER BY timestamp ASC LIMIT 200",
-        (room_name,)
-    ).fetchall()
+    query = """
+        SELECT messages.message_id, users.nickname as nickname, messages.message_text as text, messages.timestamp as time
+        FROM messages
+        JOIN users ON messages.user_id = users.user_id
+        WHERE room_name = ?
+    """
+    params = [room_name]
+
+    if after_id:  # новые сообщения
+        query += " AND messages.message_id > ?"
+        params.append(after_id)
+        query += " ORDER BY messages.message_id ASC"
+    elif before_id:  # подгрузка старых
+        query += " AND messages.message_id < ?"
+        params.append(before_id)
+        query += " ORDER BY messages.message_id DESC LIMIT ?"
+        params.append(limit)
+    else:
+        # начальная загрузка последних сообщений
+        query += " ORDER BY messages.message_id DESC LIMIT ?"
+        params.append(limit)
+
+    msgs = conn.execute(query, params).fetchall()
     conn.close()
-    out = [{'nickname': m['nickname'], 'text': m['text'], 'time': m['time']} for m in messages]
+
+    # если загружали старые, возвращаем в нормальном порядке (от старых к новым)
+    if before_id or not after_id:
+        msgs = list(reversed(msgs))
+
+    out = [{'id': m['message_id'], 'nickname': m['nickname'], 'text': m['text'], 'time': m['time']} for m in msgs]
     return jsonify(out)
+
+
+
 
 # ------------------------
 # Отправка сообщения в комнату
