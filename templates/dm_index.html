@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Личные сообщения{% endblock %}
+{% block content %}
+  <div class="row">
+    <div class="col-md-8 offset-md-2">
+      <h2>Написать личное сообщение</h2>
+      <p>Вы: <strong>{{ nickname }}</strong></p>
+      <div class="list-group">
+        {% for u in users %}
+          <a class="list-group-item list-group-item-action" href="{{ url_for('dm_view', target_nick=u.nickname) }}">{{ u.nickname }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+{% endblock %}

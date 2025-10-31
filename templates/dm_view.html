@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}DM: {{ target }}{% endblock %}
+{% block content %}
+  <div class="row">
+    <div class="col-md-8 offset-md-2">
+      <h3>DM: {{ target }}</h3>
+      <div id="dm" class="border rounded p-3 bg-light" style="height: 400px; overflow-y: auto;">
+        {% for m in messages %}
+          <div>
+            <small class="text-muted">[{{ m['timestamp'] }}]</small>
+            <strong>{{ m['sender_nick'] }}</strong>: {{ m['message_text'] }}
+          </div>
+        {% endfor %}
+      </div>
+
+      <form action="{{ url_for('dm_send', target_nick=target) }}" method="post" class="mt-3 d-flex gap-2">
+        <input name="message" placeholder="Написать сообщение" class="form-control" required>
+        <button class="btn btn-primary">Отправить</button>
+      </form>
+    </div>
+  </div>
+{% endblock %}

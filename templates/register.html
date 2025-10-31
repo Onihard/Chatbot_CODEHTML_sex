@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Регистрация{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-md-6 offset-md-3">
+    <h2>Регистрация</h2>
+    <form method="post">
+      <div class="mb-3">
+        <label class="form-label">Ник</label>
+        <input name="nickname" class="form-control" required>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Пароль</label>
+        <input name="password" type="password" class="form-control" required>
+      </div>
+      <button class="btn btn-primary">Зарегистрироваться</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

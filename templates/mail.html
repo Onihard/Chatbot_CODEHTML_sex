@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Входящие{% endblock %}
+{% block content %}
+  <div class="row">
+    <div class="col-md-8 offset-md-2">
+      <h2>Входящие</h2>
+      {% if messages %}
+        {% for m in messages %}
+          <div class="card mb-2">
+            <div class="card-body">
+              <h6 class="card-subtitle mb-2 text-muted">От: {{ m['sender'] }} — {{ m['timestamp'] }}</h6>
+              <p class="card-text">{{ m['message_text'] }}</p>
+            </div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <p>Пока нет входящих сообщений.</p>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}
